@@ -53,3 +53,15 @@ func measuredFrequency(shift: Double) -> Double {
 let up = measuredFrequency(shift: 100), down = measuredFrequency(shift: -100)
 assert(abs(up - 1100) < 5 && abs(down - 900) < 5, "shifter: +100 → \(up) Hz, -100 → \(down) Hz")
 print("shifter ok")
+
+// Artwork color: mostly-grey art with a red block should pick red; pure grey stays grey.
+import AppKit
+func art(_ draw: @escaping () -> Void) -> NSImage { NSImage(size: NSSize(width: 40, height: 40), flipped: false) { _ in draw(); return true } }
+let redish = art {
+    NSColor.gray.setFill(); NSRect(x: 0, y: 0, width: 40, height: 40).fill()
+    NSColor.systemRed.setFill(); NSRect(x: 0, y: 0, width: 15, height: 40).fill()
+}.vividColor!
+assert((redish.hueComponent < 0.05 || redish.hueComponent > 0.95) && redish.saturationComponent >= 0.5, "picks red: \(redish)")
+let grey = art { NSColor.gray.setFill(); NSRect(x: 0, y: 0, width: 40, height: 40).fill() }.vividColor!
+assert(grey.saturationComponent < 0.12, "grey stays grey: \(grey)")
+print("artwork color ok")

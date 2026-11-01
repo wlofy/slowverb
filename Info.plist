@@ -16,8 +16,8 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.4</string>
-	<key>LSUIElement</key>
-	<true/>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Slowverb pauses and resumes your music app so the slowed version stays in sync with it.</string>
 	<key>NSAudioCaptureUsageDescription</key>
