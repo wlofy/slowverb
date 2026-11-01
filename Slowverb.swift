@@ -27,7 +27,7 @@ struct SlowverbApp: App {
         MenuBarExtra {
             Panel(engine: engine, inWindow: false)
         } label: {
-            Image(nsImage: Record.image(size: 18, angle: engine.spin))
+            MenuBarIcon(engine: engine)
         }
         .menuBarExtraStyle(.window)
 
@@ -161,7 +161,7 @@ struct Panel: View {
 
     /// The record doubles as a play button.
     var record: some View {
-        Record(angle: engine.spin, vinyl: engine.vinyl, label: engine.tint, art: engine.labelArt)
+        SpinningRecord(engine: engine)
             .contentShape(Circle())
             .onTapGesture { engine.setOn(!engine.isOn) }
             .accessibilityHidden(true)
@@ -312,6 +312,22 @@ struct FatSlider: View {
     }
 }
 
+/// The only views that read `engine.spin`, so each spin step redraws just the record,
+/// not the panel, sliders and glass around it.
+struct SpinningRecord: View {
+    let engine: Engine
+    var body: some View {
+        Record(angle: engine.spin, vinyl: engine.vinyl, label: engine.tint, art: engine.labelArt)
+    }
+}
+
+struct MenuBarIcon: View {
+    let engine: Engine
+    var body: some View {
+        Image(nsImage: Record.menuFrames[engine.menuFrame])
+    }
+}
+
 /// Spinning vinyl: the app logo, menu bar icon and Dock icon. The label shows album art when there is some.
 struct Record: View {
     var angle: Double  // degrees
@@ -372,6 +388,10 @@ struct Record: View {
         }
     }
 
+    /// Menu bar frames (10° apart), drawn once. Each status item update is a round trip to the system's
+    /// menu bar process, so the icon only changes when the frame does (~4/s), not on every spin step.
+    @MainActor static let menuFrames = (0..<36).map { image(size: 18, angle: Double($0) * 10) }
+
     @MainActor static func image(size: Double, angle: Double) -> NSImage {
         let renderer = ImageRenderer(content: Record(angle: angle, template: true).frame(width: size, height: size))
         renderer.scale = 2
@@ -428,7 +448,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Record(angle: engine.spin, vinyl: engine.vinyl, label: engine.tint, art: engine.labelArt)
+                SpinningRecord(engine: engine)
                     .frame(width: 110, height: 110)
                     .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
                     .frame(maxWidth: .infinity)
@@ -523,6 +543,7 @@ final class Engine {
     private(set) var isOn = false
     private(set) var error: String?
     private(set) var spin = 0.0  // degrees; turns the record logo while playing
+    private(set) var menuFrame = 0  // index into Record.menuFrames; set only when it changes
     var accent = Color(hex: UserDefaults.standard.string(forKey: "accent") ?? Engine.defaultAccent) {
         didSet { UserDefaults.standard.set(accent.hex, forKey: "accent") }
     }
@@ -688,9 +709,11 @@ final class Engine {
             synced = !source.isEmpty
             loadNowPlaying()
             // A calm 7.5 rpm (45°/s), slowed along with the music.
-            let spinner = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            let spinner = Timer(timeInterval: 1.0 / 24, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                spin = (spin + 45.0 / 30 * speed).truncatingRemainder(dividingBy: 360)
+                spin = (spin + 45.0 / 24 * speed).truncatingRemainder(dividingBy: 360)
+                let frame = Int(spin / 10) % 36
+                if frame != menuFrame { menuFrame = frame }
             }
             RunLoop.main.add(spinner, forMode: .common)  // keep spinning while menus are open
             self.spinner = spinner
