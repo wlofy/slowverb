@@ -1,6 +1,6 @@
 # Slowverb
 
-Make a slowed + reverb version of any song, live, from your Mac's menu bar or its own window. Slowverb captures audio from one app (Spotify, Chrome/YouTube, Music…) or the whole system, mutes the original, and plays it back with your own speed, pitch and reverb.
+Make a slowed + reverb version of any song, live, from your Mac's menu bar or its own window. Slowverb is **free and open source**, and contributions are welcome. Slowverb captures audio from one app (Spotify, Chrome/YouTube, Music…) or the whole system, mutes the original, and plays it back with your own speed, pitch and reverb.
 
 - A spinning record logo with the album art on its label; the UI takes its colors from the art
 - Liquid Glass controls on macOS 26+, with frosted fallbacks on older systems
@@ -13,6 +13,12 @@ Make a slowed + reverb version of any song, live, from your Mac's menu bar or it
 - Settings are remembered between launches
 - A few Swift files, no dependencies, builds without Xcode
 
+## Install
+
+1. Download the latest `Slowverb-x.y.z.dmg` from [Releases](https://github.com/wlofy/slowverb/releases).
+2. Open it and drag **Slowverb** onto **Applications**.
+3. The first time you open it, macOS will say it can't verify the developer, because the app isn't notarized by Apple. Go to **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
+
 ## Requirements
 
 macOS 14.4 or later (uses Core Audio process taps) and the Xcode Command Line Tools (`xcode-select --install`).
@@ -20,7 +26,8 @@ macOS 14.4 or later (uses Core Audio process taps) and the Xcode Command Line To
 ## Build & run
 
 ```sh
-./build.sh
+./build.sh          # build/Slowverb.app
+./package.sh        # build/Slowverb-<version>.dmg for distribution
 open build/Slowverb.app
 ```
 
@@ -48,6 +55,10 @@ If you skip a song partway through, the rest of the old song is dropped. If a so
 - **App icon:** a minimal record on the standard macOS icon shape, dark so it suits both light and dark mode. Separate dark, clear and tinted versions for macOS 26 need an Icon Composer `.icon` file compiled with Xcode; this build only uses the Command Line Tools.
 - **Control Center:** third-party Control Center controls only support toggles and buttons, not sliders, so the full controls live in the menu bar.
 
+## Contributing
+
+Slowverb is a community project, and new effects, presets, player support and fixes are all welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
 ## License
 
-MIT
+MIT. Made by [wlofy](https://github.com/wlofy).

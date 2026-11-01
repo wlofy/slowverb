@@ -142,7 +142,7 @@ struct Panel: View {
             SettingsLink { Image(systemName: "gearshape") }
                 .help("Settings")
                 .simultaneousGesture(TapGesture().onEnded { NSApp.activate() })
-            if !inWindow { Button("Quit") { NSApp.terminate(nil) } }
+            if inWindow { MadeBy() } else { Button("Quit") { NSApp.terminate(nil) } }
         }
         .buttonStyle(.borderless)
         .font(.caption)
@@ -463,10 +463,22 @@ struct SettingsView: View {
                     engine.vinyl = Color(hex: Engine.defaultVinyl)
                 }
             }
+            Section {
+                LabeledContent("Slowverb", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+                MadeBy()
+            }
         }
         .formStyle(.grouped)
         .frame(width: 380)
         .tint(engine.tint)
+    }
+}
+
+struct MadeBy: View {
+    var body: some View {
+        Link("Free & open source · Made by wlofy", destination: URL(string: "https://github.com/wlofy/slowverb")!)
+            .font(.caption)
+            .help("Contribute at github.com/wlofy/slowverb")
     }
 }
 
