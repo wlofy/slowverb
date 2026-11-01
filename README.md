@@ -43,7 +43,7 @@ The frequency shifter moves every frequency by the same number of Hz, while pitc
 
 ## Staying in sync
 
-Slowed audio plays back more slowly than the app sends it. With **Spotify** or **Music** as the source, Slowverb pauses the app whenever it gets 4 s ahead and resumes it at 1 s. Because the original is muted, you never hear this, and every song plays in full, in order. The first time this happens, macOS asks you to let Slowverb control the app.
+Slowed audio plays back more slowly than the app sends it, so within a song the slowed version simply falls behind (Slowverb holds up to 3 minutes). With **Spotify** or **Music** as the source, when the next song starts Slowverb pauses the app, finishes the slowed song, then restarts the next song from 0:00. You never hear this, because the original is muted, and every song plays in full and in order. The first time this happens, macOS asks you to let Slowverb control the app.
 
 If you skip a song partway through, the rest of the old song is dropped. If a song ends on its own, its ending still plays.
 

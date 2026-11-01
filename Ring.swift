@@ -2,7 +2,8 @@ import Foundation
 import CoreAudio
 
 /// Stereo FIFO between the tap's IO thread and the engine's render thread.
-/// Holds up to 60s so slowed playback can lag behind live; when full, the oldest audio is dropped.
+/// Holds up to 3 minutes so slowed playback can fall behind live for a whole song; when full, the oldest
+/// audio is dropped. ~65 MB at 48 kHz.
 /// Silent buffers are skipped, so a paused source doesn't pad the backlog with silence.
 final class Ring: @unchecked Sendable {
     // ponytail: NSLock on audio threads is fine at these buffer sizes; go lock-free SPSC if you ever hear dropouts.
@@ -10,8 +11,9 @@ final class Ring: @unchecked Sendable {
     private let cap: Int, prime: Int, sampleRate: Double
     private let l: UnsafeMutablePointer<Float>, r: UnsafeMutablePointer<Float>
     private var head = 0, count = 0, priming = true
+    private var accepting = true  // false while the source is held at a song change (see hold)
 
-    init(sampleRate: Double, seconds: Double = 60) {
+    init(sampleRate: Double, seconds: Double = 180) {
         self.sampleRate = sampleRate
         cap = Int(sampleRate * seconds)
         prime = Int(sampleRate * 0.05)
@@ -39,6 +41,7 @@ final class Ring: @unchecked Sendable {
         }
         guard (0..<frames).contains(where: { left[$0 * stride] != 0 || right[$0 * stride] != 0 }) else { return }
         lock.lock(); defer { lock.unlock() }
+        guard accepting else { return }
         for i in 0..<frames {
             let tail = (head + count) % cap
             l[tail] = left[i * stride]
@@ -62,6 +65,19 @@ final class Ring: @unchecked Sendable {
             head = (head + 1) % cap
             count -= 1
         }
+    }
+
+    /// Stops taking audio and drops the newest `seconds`: used when the next song starts while we're still
+    /// playing the previous one, so its first moments (and the player's pause fade) never get in.
+    func hold(droppingNewest seconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        accepting = false
+        count -= min(count, Int(seconds * sampleRate))
+    }
+
+    func resume() {
+        lock.lock(); defer { lock.unlock() }
+        accepting = true
     }
 
     /// Seconds of audio waiting to be played.

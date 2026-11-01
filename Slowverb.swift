@@ -576,6 +576,7 @@ final class Engine {
     @ObservationIgnored private var pacer: Timer?
     @ObservationIgnored private var spinner: Timer?
     @ObservationIgnored private var pausedSource = false
+    @ObservationIgnored private var restartTrack = false  // held at a song change: resume the new song from 0:00
     typealias Track = (id: String, length: Double, position: Double, at: Date, playing: Bool)
     @ObservationIgnored private var track: Track?
 
@@ -629,7 +630,18 @@ final class Engine {
         let now = Date()
         // ponytail: position is estimated between updates; scrubbing in Music (which doesn't report it) can misjudge a skip.
         func position(_ t: Track) -> Double { t.position + (t.playing ? now.timeIntervalSince(t.at) : 0) }
-        if isOn, let t = track, t.id != id, t.length == 0 || position(t) < t.length - 3 { catchUp() }
+        if isOn, let t = track, t.id != id {
+            if t.length == 0 || position(t) < t.length - 3 {
+                catchUp()
+            } else if synced, !pausedSource, let ring, ring.backlog > 1 {
+                // The song ended on its own but we're still playing its slowed version. Hold the next song
+                // until we're done, then start it from the top. Pausing here means the player's pause/play
+                // fades land on the first moments of a song, not in the middle of one.
+                // ponytail: 0.4 s covers the notification arriving a little after the new song starts.
+                ring.hold(droppingNewest: 0.4)
+                if tell("pause") { pausedSource = true; restartTrack = true } else { ring.resume() }
+            }
+        }
         if track?.id != id { loadArtwork(from: player) }
         self.song = song
         self.artist = artist
@@ -758,16 +770,20 @@ final class Engine {
         try CA.check(AudioDeviceStart(agg, proc), "Couldn't start tap")
     }
 
-    /// Slowed audio drains slower than the app plays it, so pause the app when we're 4s ahead and
-    /// resume at 1s. The app is muted anyway; this just meters audio in, so songs never get cut off.
+    /// Slowed audio drains slower than the app plays it. Within a song we just fall behind (the buffer holds
+    /// 3 minutes); the app is paused at song changes (see nowPlaying) and, as a last resort, when the backlog
+    /// nears the limit. Each pause costs a short fade dip, so they're kept rare. The app is muted anyway.
     private func pace() {
         guard let ring else { return }
         let backlog = ring.backlog
-        if !pausedSource, backlog > 4 {
+        if !pausedSource, backlog > 150 {
             if tell("pause") { pausedSource = true } else { synced = false; pacer?.invalidate() }
         } else if pausedSource, backlog < 1 {
+            if restartTrack { _ = tell("set player position to 0") }
+            ring.resume()
             _ = tell("play")
             pausedSource = false
+            restartTrack = false
         }
     }
 
@@ -789,6 +805,7 @@ final class Engine {
         spinner = nil
         if pausedSource { _ = tell("play") }
         pausedSource = false
+        restartTrack = false
         synced = false
         if let proc {
             AudioDeviceStop(agg, proc)

@@ -65,3 +65,22 @@ assert((redish.hueComponent < 0.05 || redish.hueComponent > 0.95) && redish.satu
 let grey = art { NSColor.gray.setFill(); NSRect(x: 0, y: 0, width: 40, height: 40).fill() }.vividColor!
 assert(grey.saturationComponent < 0.12, "grey stays grey: \(grey)")
 print("artwork color ok")
+
+// Hold: at a song change, the newest audio is dropped and nothing more is taken until resume().
+func pushSamples(_ ring: Ring, _ samples: [Float]) {
+    var data = samples.flatMap { [$0, $0] }
+    data.withUnsafeMutableBytes { raw in
+        var abl = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(samples.count * 8), mData: raw.baseAddress))
+        ring.write(&abl, nonInterleaved: false)
+    }
+}
+let held = Ring(sampleRate: 1000, seconds: 5)
+pushSamples(held, [Float](repeating: 0.5, count: 500))
+held.hold(droppingNewest: 0.1)                         // drop newest 100 frames
+pushSamples(held, [Float](repeating: 0.9, count: 300)) // ignored while held
+assert(abs(held.backlog - 0.4) < 1e-9, "hold drops newest and ignores input: \(held.backlog)")
+held.resume()
+pushSamples(held, [Float](repeating: 0.7, count: 100))
+let heldOut = pull(held, 450).0
+assert(heldOut.prefix(400).allSatisfy { $0 == 0.5 } && heldOut.suffix(50).allSatisfy { $0 == 0.7 }, "resumes after the kept audio")
+print("hold ok")
