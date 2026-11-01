@@ -18,6 +18,8 @@
 	<string>14.4</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Slowverb pauses and resumes your music app so the slowed version stays in sync with it.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Slowverb captures app audio so it can play it back slowed, pitched and with reverb.</string>
 </dict>

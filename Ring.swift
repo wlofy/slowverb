@@ -3,14 +3,16 @@ import CoreAudio
 
 /// Stereo FIFO between the tap's IO thread and the engine's render thread.
 /// Holds up to 60s so slowed playback can lag behind live; when full, the oldest audio is dropped.
+/// Silent buffers are skipped, so a paused source doesn't pad the backlog with silence.
 final class Ring: @unchecked Sendable {
     // ponytail: NSLock on audio threads is fine at these buffer sizes; go lock-free SPSC if you ever hear dropouts.
     private let lock = NSLock()
-    private let cap: Int, prime: Int
+    private let cap: Int, prime: Int, sampleRate: Double
     private let l: UnsafeMutablePointer<Float>, r: UnsafeMutablePointer<Float>
     private var head = 0, count = 0, priming = true
 
     init(sampleRate: Double, seconds: Double = 60) {
+        self.sampleRate = sampleRate
         cap = Int(sampleRate * seconds)
         prime = Int(sampleRate * 0.05)
         l = .allocate(capacity: cap)
@@ -35,6 +37,7 @@ final class Ring: @unchecked Sendable {
             stride = ch
             frames = Int(last.mDataByteSize) / 4 / ch
         }
+        guard (0..<frames).contains(where: { left[$0 * stride] != 0 || right[$0 * stride] != 0 }) else { return }
         lock.lock(); defer { lock.unlock() }
         for i in 0..<frames {
             let tail = (head + count) % cap
@@ -59,6 +62,12 @@ final class Ring: @unchecked Sendable {
             head = (head + 1) % cap
             count -= 1
         }
+    }
+
+    /// Seconds of audio waiting to be played.
+    var backlog: Double {
+        lock.lock(); defer { lock.unlock() }
+        return Double(count) / sampleRate
     }
 
     func catchUp() {

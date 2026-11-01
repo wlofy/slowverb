@@ -32,7 +32,7 @@ struct Panel: View {
                     .symbolEffect(.variableColor.iterative, isActive: engine.isOn)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Slowverb").font(.headline)
-                    Text(engine.error ?? (engine.isOn ? "Live" : "Off"))
+                    Text(engine.error ?? status)
                         .font(.caption)
                         .foregroundStyle(engine.error == nil ? .secondary : Color.red)
                         .lineLimit(2)
@@ -56,7 +56,7 @@ struct Panel: View {
 
             Module {
                 FatSlider(icon: "tortoise.fill", label: "Speed", value: $engine.speed,
-                          range: 0.5...1.5, step: 0.01) { String(format: "%.2f×", $0) }
+                          range: 0.5...1, step: 0.01) { String(format: "%.2f×", $0) }
                 FatSlider(icon: "tuningfork", label: "Pitch", value: $engine.pitch,
                           range: -12...12, step: 0.1) { String(format: "%+.1f st", $0) }
                 FatSlider(icon: "water.waves", label: "Reverb", value: $engine.reverb,
@@ -64,15 +64,15 @@ struct Panel: View {
             }
 
             HStack(spacing: 6) {
-                // Vinyl-style presets: pitch follows speed (12·log2(speed) semitones).
+                // Vinyl-style: pitch follows speed (12·log2(speed) semitones).
                 chip("Slowed + Reverb", speed: 0.85, pitch: -2.8, reverb: 45)
-                chip("Nightcore", speed: 1.25, pitch: 3.9, reverb: 10)
+                chip("Pitched Up", speed: 1, pitch: 4, reverb: 10)
                 chip("Reset", speed: 1, pitch: 0, reverb: 0)
             }
 
             HStack {
                 Button("Catch Up", systemImage: "forward.end.fill") { engine.catchUp() }
-                    .help("Jump back to live audio (slowing builds up a delay)")
+                    .help("Skip the slowed backlog and jump to what's playing now")
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
             }
@@ -84,6 +84,12 @@ struct Panel: View {
         .frame(width: 300)
         .tint(.purple)
         .onAppear { engine.sources = Source.running() }
+    }
+
+    var status: String {
+        guard engine.isOn else { return "Off" }
+        guard engine.synced else { return "Live — Catch Up if it drifts" }
+        return "In sync with \(engine.sources.first { $0.id == engine.source }?.name ?? "app")"
     }
 
     func chip(_ title: String, speed: Double, pitch: Double, reverb: Double) -> some View {
@@ -176,6 +182,7 @@ struct Failure: Error { let message: String }
 final class Engine {
     private(set) var isOn = false
     private(set) var error: String?
+    private(set) var synced = false  // we pause/resume the source app so slowed audio never falls behind
     var sources: [Source] = []
     var source = UserDefaults.standard.string(forKey: "source") ?? "" {
         didSet {
@@ -183,7 +190,7 @@ final class Engine {
             if isOn { stop(); start() }
         }
     }
-    var speed = Engine.saved("speed", 1) { didSet { apply() } }
+    var speed = min(Engine.saved("speed", 1), 1) { didSet { apply() } }
     var pitch = Engine.saved("pitch", 0) { didSet { apply() } }
     var reverb = Engine.saved("reverb", 0) { didSet { apply() } }
 
@@ -195,6 +202,9 @@ final class Engine {
     @ObservationIgnored private var tap = AudioObjectID(kAudioObjectUnknown)
     @ObservationIgnored private var agg = AudioObjectID(kAudioObjectUnknown)
     @ObservationIgnored private var proc: AudioDeviceIOProcID?
+    @ObservationIgnored private var pacer: Timer?
+    @ObservationIgnored private var pausedSource = false
+    @ObservationIgnored private var track: (id: String, length: Double, position: Double, at: Date, playing: Bool)?
 
     static func saved(_ key: String, _ fallback: Double) -> Double {
         UserDefaults.standard.object(forKey: key) as? Double ?? fallback
@@ -205,6 +215,28 @@ final class Engine {
         av.attach(verb)
         verb.loadFactoryPreset(.largeHall2)
         apply()
+        for name in ["com.spotify.client.PlaybackStateChanged", "com.apple.Music.playerInfo"] {
+            DistributedNotificationCenter.default().addObserver(forName: .init(name), object: nil, queue: .main) { [weak self] in
+                self?.playerChanged($0.userInfo ?? [:])
+            }
+        }
+    }
+
+    /// When the user skips to another song, drop what's left of the old one instead of finishing it.
+    /// A song that ended on its own keeps its tail, so endings aren't cut off.
+    private func playerChanged(_ info: [AnyHashable: Any]) {
+        let id = "\(info["Track ID"] ?? info["PersistentID"] ?? "")"
+        let playing = info["Player State"] as? String == "Playing"
+        let now = Date()
+        // ponytail: position is estimated from notifications; scrubbing in Music (which doesn't send it) can misjudge a skip.
+        func position(_ t: (id: String, length: Double, position: Double, at: Date, playing: Bool)) -> Double {
+            t.position + (t.playing ? now.timeIntervalSince(t.at) : 0)
+        }
+        if isOn, let t = track, t.id != id, t.length == 0 || position(t) < t.length - 3 { ring?.catchUp() }
+        let length = ((info["Duration"] ?? info["Total Time"]) as? NSNumber)?.doubleValue ?? 0
+        let reported = (info["Playback Position"] as? NSNumber)?.doubleValue
+        let carried = track.flatMap { $0.id == id ? position($0) : nil } ?? 0
+        track = (id, length / 1000, reported ?? carried, now, playing)
     }
 
     func setOn(_ on: Bool) { on ? start() : stop() }
@@ -222,6 +254,8 @@ final class Engine {
             try startTap()
             isOn = true
             error = nil
+            synced = !source.isEmpty
+            if synced { pacer = .scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.pace() } }
         } catch {
             stop()
             self.error = (error as? Failure)?.message ?? error.localizedDescription
@@ -284,7 +318,32 @@ final class Engine {
         try CA.check(AudioDeviceStart(agg, proc), "Couldn't start tap")
     }
 
+    /// Slowed audio drains slower than the app plays it, so pause the app when we're 4s ahead and
+    /// resume at 1s. The app is muted anyway; this just meters audio in, so songs never get cut off.
+    private func pace() {
+        guard let ring else { return }
+        let backlog = ring.backlog
+        if !pausedSource, backlog > 4 {
+            if tell("pause") { pausedSource = true } else { synced = false; pacer?.invalidate() }
+        } else if pausedSource, backlog < 1 {
+            _ = tell("play")
+            pausedSource = false
+        }
+    }
+
+    /// Works for scriptable players (Spotify, Music…). Fails for others, e.g. browsers, which stay live.
+    private func tell(_ command: String) -> Bool {
+        var err: NSDictionary?
+        NSAppleScript(source: "tell application id \"\(source)\" to \(command)")?.executeAndReturnError(&err)
+        return err == nil
+    }
+
     private func stop() {
+        pacer?.invalidate()
+        pacer = nil
+        if pausedSource { _ = tell("play") }
+        pausedSource = false
+        synced = false
         if let proc {
             AudioDeviceStop(agg, proc)
             AudioDeviceDestroyIOProcID(agg, proc)
