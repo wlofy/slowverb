@@ -1,5 +1,9 @@
 # Slowverb
 
+<p align="center"><img src="demo/slowverb.gif" alt="Slowverb's sliders changing speed, pitch and reverb" width="640"></p>
+
+<p align="center"><a href="https://github.com/wlofy/slowverb/releases/latest"><b>⬇ Download for macOS</b></a> · free &amp; open source</p>
+
 Make a slowed + reverb version of any song, live, from your Mac's menu bar or its own window. Slowverb is **free and open source**, and contributions are welcome. Slowverb captures audio from one app (Spotify, Chrome/YouTube, Music…) or the whole system, mutes the original, and plays it back with your own speed, pitch and reverb.
 
 - A spinning record logo with the album art on its label; the UI takes its colors from the art
