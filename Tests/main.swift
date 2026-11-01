@@ -34,3 +34,22 @@ zeros.withUnsafeMutableBytes { raw in
 }
 assert(abs(ring.backlog - 0.005) < 1e-9, "silence is skipped")
 print("ring ok")
+
+// Frequency shifter: a 1000 Hz sine shifted by ±100 Hz should come out at 1100 / 900 Hz.
+func measuredFrequency(shift: Double) -> Double {
+    let sr = 48000.0, n = 48000
+    let fs = FrequencyShifter(sampleRate: sr)
+    fs.shift = shift
+    var l = (0..<n).map { Float(sin(2 * Double.pi * 1000 * Double($0) / sr)) }, r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+        for start in stride(from: 0, to: n, by: 512) {
+            fs.process(lp.baseAddress! + start, rp.baseAddress! + start, frames: min(512, n - start))
+        }
+    }}
+    let settled = Array(l[4800...])  // skip filter warm-up, measure the remaining 0.9 s
+    let crossings = zip(settled, settled.dropFirst()).filter { $0 < 0 && $1 >= 0 }.count
+    return Double(crossings) / 0.9
+}
+let up = measuredFrequency(shift: 100), down = measuredFrequency(shift: -100)
+assert(abs(up - 1100) < 5 && abs(down - 900) < 5, "shifter: +100 → \(up) Hz, -100 → \(down) Hz")
+print("shifter ok")

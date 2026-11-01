@@ -61,11 +61,15 @@ struct Panel: View {
                           range: -12...12, step: 0.1) { String(format: "%+.1f st", $0) }
                 FatSlider(icon: "water.waves", label: "Reverb", value: $engine.reverb,
                           range: 0...100, step: 1) { "\(Int($0))%" }
+                FatSlider(icon: "speaker.wave.3.fill", label: "Bass", value: $engine.bass,
+                          range: 0...12, step: 0.5) { String(format: "+%.1f dB", $0) }
+                FatSlider(icon: "waveform.path", label: "Shift", value: $engine.shift,
+                          range: -200...200, step: 1) { String(format: "%+.0f Hz", $0) }
             }
 
             HStack(spacing: 6) {
                 // Vinyl-style: pitch follows speed (12·log2(speed) semitones).
-                chip("Slowed + Reverb", speed: 0.85, pitch: -2.8, reverb: 45)
+                chip("Slowed + Reverb", speed: 0.85, pitch: -2.8, reverb: 45, bass: 4)
                 chip("Pitched Up", speed: 1, pitch: 4, reverb: 10)
                 chip("Reset", speed: 1, pitch: 0, reverb: 0)
             }
@@ -92,10 +96,11 @@ struct Panel: View {
         return "In sync with \(engine.sources.first { $0.id == engine.source }?.name ?? "app")"
     }
 
-    func chip(_ title: String, speed: Double, pitch: Double, reverb: Double) -> some View {
+    func chip(_ title: String, speed: Double, pitch: Double, reverb: Double, bass: Double = 0, shift: Double = 0) -> some View {
         let active = engine.speed == speed && engine.pitch == pitch && engine.reverb == reverb
+            && engine.bass == bass && engine.shift == shift
         return Button {
-            withAnimation(.snappy) { engine.speed = speed; engine.pitch = pitch; engine.reverb = reverb }
+            withAnimation(.snappy) { engine.speed = speed; engine.pitch = pitch; engine.reverb = reverb; engine.bass = bass; engine.shift = shift }
         } label: {
             Text(title)
                 .font(.caption.weight(.medium))
@@ -193,10 +198,14 @@ final class Engine {
     var speed = min(Engine.saved("speed", 1), 1) { didSet { apply() } }
     var pitch = Engine.saved("pitch", 0) { didSet { apply() } }
     var reverb = Engine.saved("reverb", 0) { didSet { apply() } }
+    var bass = Engine.saved("bass", 0) { didSet { apply() } }
+    var shift = Engine.saved("shift", 0) { didSet { apply() } }
 
     @ObservationIgnored private let av = AVAudioEngine()
     @ObservationIgnored private let timePitch = AVAudioUnitTimePitch()
     @ObservationIgnored private let verb = AVAudioUnitReverb()
+    @ObservationIgnored private let eq = AVAudioUnitEQ(numberOfBands: 1)
+    @ObservationIgnored private var shifter: FrequencyShifter?
     @ObservationIgnored private var node: AVAudioSourceNode?
     @ObservationIgnored private var ring: Ring?
     @ObservationIgnored private var tap = AudioObjectID(kAudioObjectUnknown)
@@ -213,6 +222,10 @@ final class Engine {
     init() {
         av.attach(timePitch)
         av.attach(verb)
+        av.attach(eq)
+        eq.bands[0].filterType = .lowShelf
+        eq.bands[0].frequency = 120
+        eq.bands[0].bypass = false
         verb.loadFactoryPreset(.largeHall2)
         apply()
         for name in ["com.spotify.client.PlaybackStateChanged", "com.apple.Music.playerInfo"] {
@@ -246,7 +259,10 @@ final class Engine {
         timePitch.rate = Float(speed)
         timePitch.pitch = Float(pitch * 100)
         verb.wetDryMix = Float(reverb)
-        for (k, v) in [("speed", speed), ("pitch", pitch), ("reverb", reverb)] { UserDefaults.standard.set(v, forKey: k) }
+        eq.bands[0].gain = Float(bass)
+        eq.globalGain = Float(-bass / 2)  // leave headroom so the boost doesn't clip
+        shifter?.shift = shift
+        for (k, v) in [("speed", speed), ("pitch", pitch), ("reverb", reverb), ("bass", bass), ("shift", shift)] { UserDefaults.standard.set(v, forKey: k) }
     }
 
     private func start() {
@@ -298,22 +314,29 @@ final class Engine {
         let nonInterleaved = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
 
         let ring = Ring(sampleRate: asbd.mSampleRate)
+        let shifter = FrequencyShifter(sampleRate: asbd.mSampleRate)
+        shifter.shift = shift
+        self.shifter = shifter
         self.ring = ring
         try CA.check(AudioDeviceCreateIOProcIDWithBlock(&proc, agg, nil) { _, input, _, _, _ in
             ring.write(input, nonInterleaved: nonInterleaved)
         }, "Couldn't read tap")
 
-        // Ring → time/pitch → reverb → speakers. TimePitch pulls faster/slower than live depending on speed.
+        // Ring → frequency shift → time/pitch → reverb → bass → speakers. TimePitch pulls faster/slower than live depending on speed.
         let fmt = AVAudioFormat(standardFormatWithSampleRate: asbd.mSampleRate, channels: 2)!
         let node = AVAudioSourceNode(format: fmt) { _, _, frames, out in
             ring.read(out, Int(frames))
+            let bufs = UnsafeMutableAudioBufferListPointer(out)
+            shifter.process(bufs[0].mData!.assumingMemoryBound(to: Float.self),
+                            bufs[1].mData!.assumingMemoryBound(to: Float.self), frames: Int(frames))
             return noErr
         }
         self.node = node
         av.attach(node)
         av.connect(node, to: timePitch, format: fmt)
         av.connect(timePitch, to: verb, format: fmt)
-        av.connect(verb, to: av.mainMixerNode, format: fmt)
+        av.connect(verb, to: eq, format: fmt)
+        av.connect(eq, to: av.mainMixerNode, format: fmt)
         try av.start()
         try CA.check(AudioDeviceStart(agg, proc), "Couldn't start tap")
     }
@@ -357,6 +380,7 @@ final class Engine {
         if let node { av.detach(node) }
         node = nil
         ring = nil
+        shifter = nil
         isOn = false
     }
 }

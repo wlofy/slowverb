@@ -7,7 +7,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp Info.plist "$APP/Contents/"
 for arch in arm64 x86_64; do
-  swiftc -O -swift-version 5 -parse-as-library -target "$arch-apple-macos14.4" Slowverb.swift Ring.swift -o "build/Slowverb-$arch"
+  swiftc -O -swift-version 5 -parse-as-library -target "$arch-apple-macos14.4" Slowverb.swift Ring.swift FrequencyShifter.swift -o "build/Slowverb-$arch"
 done
 lipo -create build/Slowverb-arm64 build/Slowverb-x86_64 -output "$APP/Contents/MacOS/Slowverb"
 rm build/Slowverb-arm64 build/Slowverb-x86_64

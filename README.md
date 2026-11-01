@@ -2,12 +2,12 @@
 
 Make a slowed + reverb version of any song, live, from your Mac's menu bar. Slowverb captures audio from one app (Spotify, Chrome/YouTube, Music…) or the whole system, mutes the original, and plays it back with your own speed, pitch and reverb.
 
-- Control Center–style sliders for **Speed**, **Pitch** and **Reverb**
+- Control Center–style sliders for **Speed**, **Pitch**, **Reverb**, **Bass** boost and frequency **Shift**
 - One-tap presets: **Slowed + Reverb**, **Pitched Up**, **Reset**
 - Stays in sync with Spotify and Music, so songs never get cut off or overlap
 - Choose which app to capture, or use **All Audio**
 - Settings are remembered between launches
-- One Swift file, no dependencies, builds without Xcode
+- A few Swift files, no dependencies, builds without Xcode
 
 ## Requirements
 
@@ -22,11 +22,13 @@ open build/Slowverb.app
 
 Click the waveform icon in the menu bar and turn on the switch. The first time you do this, macOS asks for permission to record system audio. If you deny it, you can allow it later in **System Settings › Privacy & Security › Screen & System Audio Recording**.
 
-To run the ring buffer self-check: `./test.sh`.
+To run the self-checks (ring buffer and frequency shifter): `./test.sh`.
 
 ## How it works
 
-`CATapDescription` + `AudioHardwareCreateProcessTap` capture the selected app's audio and mute it at the source. The captured audio goes into a ring buffer, then through `AVAudioEngine`: `AVAudioUnitTimePitch` (speed and pitch) → `AVAudioUnitReverb` → speakers.
+`CATapDescription` + `AudioHardwareCreateProcessTap` capture the selected app's audio and mute it at the source. The captured audio goes into a ring buffer, then through `AVAudioEngine`: a frequency shifter → `AVAudioUnitTimePitch` (speed and pitch) → `AVAudioUnitReverb` → `AVAudioUnitEQ` low shelf (bass) → speakers.
+
+The frequency shifter moves every frequency by the same number of Hz, while pitch shifting scales them. The result sounds metallic or detuned. Small values (±5–30 Hz) give a wobbly, phasey sound.
 
 ## Staying in sync
 
