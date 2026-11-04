@@ -9,8 +9,8 @@ Make a slowed + reverb version of any song, live, from your Mac's menu bar or it
 - A spinning record logo with the album art on its label; the UI takes its colors from the art
 - Liquid Glass controls on macOS 26+, with frosted fallbacks on older systems
 - Double-click any slider to reset it; sliders snap to useful values with a trackpad tick
-- Control Center–style sliders for **Speed**, **Pitch**, **Reverb**, **Bass** boost and frequency **Shift**
-- One-tap presets: **Slowed + Reverb**, **Pitched Up**, **Reset**
+- Control Center–style sliders for **Speed**, **Pitch**, **Reverb**, **Bass** boost, frequency **Shift**, **Lo-fi**, vinyl **Crackle** and **Rain**
+- One-tap presets: **Slowed + Reverb**, **Lo-fi**, **Pitched Up**, **Reset**
 - Stays in sync with Spotify and Music, so songs never get cut off or overlap
 - Choose which app to capture, or use **All Audio**
 - Settings: accent and vinyl colors, now-playing display, match colors to album art
@@ -37,11 +37,11 @@ open build/Slowverb.app
 
 Click the record in the menu bar (or open the app window) and press the power button, or click the record itself. The first time you do this, macOS asks for permission to record system audio. If you deny it, you can allow it later in **System Settings › Privacy & Security › Screen & System Audio Recording**.
 
-To run the self-checks (ring buffer, frequency shifter, artwork color): `./test.sh`.
+To run the self-checks (ring buffer, frequency shifter, artwork color, crackle, rain loop): `./test.sh`.
 
 ## How it works
 
-`CATapDescription` + `AudioHardwareCreateProcessTap` capture the selected app's audio and mute it at the source. The captured audio goes into a ring buffer, then through `AVAudioEngine`: a frequency shifter → `AVAudioUnitTimePitch` (speed and pitch) → `AVAudioUnitReverb` → `AVAudioUnitEQ` low shelf (bass) → speakers.
+`CATapDescription` + `AudioHardwareCreateProcessTap` capture the selected app's audio and mute it at the source. The captured audio goes into a ring buffer, then through `AVAudioEngine`: a frequency shifter → `AVAudioUnitTimePitch` (speed and pitch) → `AVAudioUnitReverb` → `AVAudioUnitEQ` (bass low shelf and lo-fi low-pass) → speakers. Vinyl crackle (hiss, ticks and pops) is generated live, and rain is a real recording looped seamlessly. Both are mixed in last, so they aren't slowed down or drowned in reverb.
 
 The frequency shifter moves every frequency by the same number of Hz, while pitch shifting scales them. The result sounds metallic or detuned. Small values (±5–30 Hz) give a wobbly, phasey sound.
 
@@ -66,3 +66,5 @@ Slowverb is a community project, and new effects, presets, player support and fi
 ## License
 
 MIT. Made by [wlofy](https://github.com/wlofy).
+
+Rain recording: [Rain (loopable)](https://opengameart.org/content/rain-loopable) by Ylmir, released into the public domain (CC0). Trimmed and crossfaded into a seamless loop in `Resources/Rain.caf`.

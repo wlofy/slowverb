@@ -118,13 +118,24 @@ struct Panel: View {
                       detents: [0, 3, 6, 9, 12]) { String(format: "+%.1f dB", $0) }
             FatSlider(icon: "waveform.path", label: "Shift", value: $engine.shift, range: -200...200, step: 1,
                       detents: [-100, -50, 0, 50, 100]) { String(format: "%+.0f Hz", $0) }
+            FatSlider(icon: "dial.low.fill", label: "Lo-fi", value: $engine.lofi, range: 0...100, step: 1,
+                      detents: [0, 25, 50, 75, 100]) { "\(Int($0))%" }
+            FatSlider(icon: "sparkles", label: "Crackle", value: $engine.crackle, range: 0...100, step: 1,
+                      detents: [0, 25, 50, 75, 100]) { "\(Int($0))%" }
+            FatSlider(icon: "cloud.rain.fill", label: "Rain", value: $engine.rain, range: 0...100, step: 1,
+                      detents: [0, 25, 50, 75, 100]) { "\(Int($0))%" }
         }
 
-        HStack(spacing: 6) {
-            // Vinyl-style: pitch follows speed (12·log2(speed) semitones).
-            chip("Slowed + Reverb", speed: 0.85, pitch: -2.8, reverb: 45, bass: 4)
-            chip("Pitched Up", speed: 1, pitch: 4, reverb: 10)
-            chip("Reset", speed: 1, pitch: 0, reverb: 0)
+        // Vinyl-style: pitch follows speed (12·log2(speed) semitones).
+        Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+            GridRow {
+                chip("Slowed + Reverb", speed: 0.85, pitch: -2.8, reverb: 45, bass: 4)
+                chip("Lo-fi", speed: 0.92, pitch: -1.4, reverb: 25, bass: 3, lofi: 55, crackle: 40)
+            }
+            GridRow {
+                chip("Pitched Up", speed: 1, pitch: 4, reverb: 10)
+                chip("Reset", speed: 1, pitch: 0, reverb: 0)
+            }
         }
 
         HStack(spacing: 14) {
@@ -173,11 +184,13 @@ struct Panel: View {
         return "In sync with \(engine.sources.first { $0.id == engine.source }?.name ?? "app")"
     }
 
-    func chip(_ title: String, speed: Double, pitch: Double, reverb: Double, bass: Double = 0, shift: Double = 0) -> some View {
+    func chip(_ title: String, speed: Double, pitch: Double, reverb: Double, bass: Double = 0, shift: Double = 0,
+              lofi: Double = 0, crackle: Double = 0, rain: Double = 0) -> some View {
         let active = engine.speed == speed && engine.pitch == pitch && engine.reverb == reverb
-            && engine.bass == bass && engine.shift == shift
+            && engine.bass == bass && engine.shift == shift && engine.lofi == lofi && engine.crackle == crackle && engine.rain == rain
         return Button {
-            withAnimation(.snappy) { engine.speed = speed; engine.pitch = pitch; engine.reverb = reverb; engine.bass = bass; engine.shift = shift }
+            withAnimation(.snappy) { engine.speed = speed; engine.pitch = pitch; engine.reverb = reverb; engine.bass = bass; engine.shift = shift
+                engine.lofi = lofi; engine.crackle = crackle; engine.rain = rain }
         } label: {
             Text(title)
                 .font(.caption.weight(.medium))
@@ -583,12 +596,20 @@ final class Engine {
     var reverb = Engine.saved("reverb", 0) { didSet { apply() } }
     var bass = Engine.saved("bass", 0) { didSet { apply() } }
     var shift = Engine.saved("shift", 0) { didSet { apply() } }
+    var lofi = Engine.saved("lofi", 0) { didSet { apply() } }
+    var crackle = Engine.saved("crackle", 0) { didSet { apply() } }
+    var rain = Engine.saved("rain", 0) { didSet { apply() } }
 
     @ObservationIgnored private let av = AVAudioEngine()
     @ObservationIgnored private let timePitch = AVAudioUnitTimePitch()
     @ObservationIgnored private let verb = AVAudioUnitReverb()
-    @ObservationIgnored private let eq = AVAudioUnitEQ(numberOfBands: 1)
+    @ObservationIgnored private let eq = AVAudioUnitEQ(numberOfBands: 2)  // bass shelf, lo-fi low-pass
     @ObservationIgnored private var shifter: FrequencyShifter?
+    @ObservationIgnored private var ambience: Ambience?
+    @ObservationIgnored private var ambienceNode: AVAudioSourceNode?
+    // Rain is a real recording looped seamlessly ("Rain (loopable)" by Ylmir, CC0, opengameart.org).
+    @ObservationIgnored private let rainPlayer = AVAudioPlayerNode()
+    @ObservationIgnored private let rainLoop: AVAudioPCMBuffer? = Bundle.main.url(forResource: "Rain", withExtension: "caf").flatMap(Engine.load)
     @ObservationIgnored private var node: AVAudioSourceNode?
     @ObservationIgnored private var ring: Ring?
     @ObservationIgnored private var tap = AudioObjectID(kAudioObjectUnknown)
@@ -601,6 +622,13 @@ final class Engine {
     typealias Track = (id: String, length: Double, position: Double, at: Date, playing: Bool)
     @ObservationIgnored private var track: Track?
 
+    static func load(_ url: URL) -> AVAudioPCMBuffer? {
+        guard let file = try? AVAudioFile(forReading: url),
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)),
+              (try? file.read(into: buffer)) != nil else { return nil }
+        return buffer
+    }
+
     static func saved(_ key: String, _ fallback: Double) -> Double {
         UserDefaults.standard.object(forKey: key) as? Double ?? fallback
     }
@@ -609,9 +637,14 @@ final class Engine {
         av.attach(timePitch)
         av.attach(verb)
         av.attach(eq)
+        av.attach(rainPlayer)
+        if let rainLoop {  // the mixer converts it to the output device's sample rate
+            av.connect(rainPlayer, to: av.mainMixerNode, fromBus: 0, toBus: av.mainMixerNode.nextAvailableInputBus, format: rainLoop.format)
+        }
         eq.bands[0].filterType = .lowShelf
         eq.bands[0].frequency = 120
         eq.bands[0].bypass = false
+        eq.bands[1].filterType = .lowPass
         verb.loadFactoryPreset(.largeHall2)
         apply()
         for name in ["com.spotify.client.PlaybackStateChanged", "com.apple.Music.playerInfo"] {
@@ -698,7 +731,13 @@ final class Engine {
         eq.bands[0].gain = Float(bass)
         eq.globalGain = Float(-bass / 2)  // leave headroom so the boost doesn't clip
         shifter?.shift = shift
-        for (k, v) in [("speed", speed), ("pitch", pitch), ("reverb", reverb), ("bass", bass), ("shift", shift)] { UserDefaults.standard.set(v, forKey: k) }
+        // Lo-fi muffles the top end: 0% = off, 100% = a 2.5 kHz low-pass, like an old cassette.
+        eq.bands[1].bypass = lofi == 0
+        eq.bands[1].frequency = Float(20000 * pow(0.125, lofi / 100))
+        ambience?.crackle = Float(crackle / 100)
+        rainPlayer.volume = Float(rain / 100)
+        for (k, v) in [("speed", speed), ("pitch", pitch), ("reverb", reverb), ("bass", bass), ("shift", shift),
+                       ("lofi", lofi), ("crackle", crackle), ("rain", rain)] { UserDefaults.standard.set(v, forKey: k) }
     }
 
     private func start() {
@@ -774,7 +813,7 @@ final class Engine {
             ring.write(input, nonInterleaved: nonInterleaved)
         }, "Couldn't read tap")
 
-        // Ring → frequency shift → time/pitch → reverb → bass → speakers. TimePitch pulls faster/slower than live depending on speed.
+        // Ring → frequency shift → time/pitch → reverb → bass + lo-fi → speakers. TimePitch pulls faster/slower than live depending on speed.
         let fmt = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
         let node = AVAudioSourceNode(format: fmt) { _, _, frames, out in
             ring.read(out, Int(frames))
@@ -789,7 +828,25 @@ final class Engine {
         av.connect(timePitch, to: verb, format: fmt)
         av.connect(verb, to: eq, format: fmt)
         av.connect(eq, to: av.mainMixerNode, format: fmt)
+
+        // Crackle (and rain, connected in init) go straight to the mixer, so they aren't slowed down or washed out by the reverb.
+        let ambience = Ambience(sampleRate: rate)
+        ambience.crackle = Float(crackle / 100)
+        self.ambience = ambience
+        let ambienceNode = AVAudioSourceNode(format: fmt) { _, _, frames, out in
+            let bufs = UnsafeMutableAudioBufferListPointer(out)
+            ambience.render(bufs[0].mData!.assumingMemoryBound(to: Float.self),
+                            bufs[1].mData!.assumingMemoryBound(to: Float.self), frames: Int(frames))
+            return noErr
+        }
+        self.ambienceNode = ambienceNode
+        av.attach(ambienceNode)
+        av.connect(ambienceNode, to: av.mainMixerNode, fromBus: 0, toBus: av.mainMixerNode.nextAvailableInputBus, format: fmt)
         try av.start()
+        if let rainLoop {
+            rainPlayer.scheduleBuffer(rainLoop, at: nil, options: .loops)
+            rainPlayer.play()
+        }
         try CA.check(AudioDeviceStart(agg, proc), "Couldn't start tap")
     }
 
@@ -839,9 +896,13 @@ final class Engine {
         if tap != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tap) }
         agg = AudioObjectID(kAudioObjectUnknown)
         tap = AudioObjectID(kAudioObjectUnknown)
+        rainPlayer.stop()
         av.stop()
         if let node { av.detach(node) }
+        if let ambienceNode { av.detach(ambienceNode) }
         node = nil
+        ambienceNode = nil
+        ambience = nil
         ring = nil
         shifter = nil
         isOn = false

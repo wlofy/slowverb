@@ -19,11 +19,13 @@ You only need macOS 14.4+ and the Xcode Command Line Tools (`xcode-select --inst
 | `Ring.swift` | Buffer between the captured audio and playback |
 | `FrequencyShifter.swift` | Frequency shift effect |
 | `Artwork.swift` | Picks an accent color from album art |
+| `Ambience.swift` | Vinyl crackle generator |
+| `Resources/Rain.caf` | Rain recording (CC0), looped by the engine |
 | `Tests/main.swift` | Self-checks run by `./test.sh` |
 
 ## Ideas
 
-New effects (for example a lo-fi filter or echo), more presets, support for more players, and accessibility improvements are all good places to start. Check the [issues](https://github.com/wlofy/slowverb/issues) too.
+New effects (for example echo, tape wow and flutter, or a bitcrusher), more presets, support for more players, and accessibility improvements are all good places to start. Check the [issues](https://github.com/wlofy/slowverb/issues) too.
 
 ## Pull requests
 

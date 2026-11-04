@@ -84,3 +84,40 @@ pushSamples(held, [Float](repeating: 0.7, count: 100))
 let heldOut = pull(held, 450).0
 assert(heldOut.prefix(400).allSatisfy { $0 == 0.5 } && heldOut.suffix(50).allSatisfy { $0 == 0.7 }, "resumes after the kept audio")
 print("hold ok")
+
+// Ambience: silent at 0; crackle has clear ticks and never clips.
+func ambience(crackle: Float = 0) -> ([Float], [Float]) {
+    let a = Ambience(sampleRate: 48000)
+    a.crackle = crackle
+    var l = [Float](repeating: 1, count: 48000), r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+        for start in stride(from: 0, to: 48000, by: 512) {
+            a.render(lp.baseAddress! + start, rp.baseAddress! + start, frames: min(512, 48000 - start))
+        }
+    }}
+    return (l, r)
+}
+func rms(_ x: [Float]) -> Float { (x.map { $0 * $0 }.reduce(0, +) / Float(x.count)).squareRoot() }
+let quiet = ambience()
+assert(quiet.0.allSatisfy { $0 == 0 } && quiet.1.allSatisfy { $0 == 0 }, "ambience is silent at 0")
+let crackled = ambience(crackle: 1).0
+let ticks = zip(crackled, crackled.dropFirst()).filter { abs($0) < 0.05 && abs($1) >= 0.05 }.count
+assert(rms(crackled) > 0.003 && rms(crackled) < 0.08 && crackled.allSatisfy { abs($0) < 1 } && ticks > 15,
+       "crackle: rms \(rms(crackled)), \(ticks) ticks in 1 s")
+print("ambience ok")
+
+// Rain loop: priming trimmed (exactly 43 s), and the join back to the start is as smooth as any
+// other point in the recording (no click, no level dip).
+import AVFoundation
+let rainFile = try! AVAudioFile(forReading: URL(fileURLWithPath: "Resources/Rain.caf"))
+let rainBuf = AVAudioPCMBuffer(pcmFormat: rainFile.processingFormat, frameCapacity: AVAudioFrameCount(rainFile.length))!
+try! rainFile.read(into: rainBuf)
+let rain = Array(UnsafeBufferPointer(start: rainBuf.floatChannelData![0], count: Int(rainBuf.frameLength)))
+let steps = zip(rain, rain.dropFirst()).map { abs($1 - $0) }.sorted()
+let seamStep = abs(rain[0] - rain[rain.count - 1])
+let edge = 11025  // 0.25 s
+let level = rms(rain), startLevel = rms(Array(rain.prefix(edge))), endLevel = rms(Array(rain.suffix(edge)))
+assert(rain.count == 43 * 44100, "rain loop is \(rain.count) frames (priming not trimmed?)")
+assert(seamStep <= steps[steps.count * 99 / 100], "rain loop clicks at the join: step \(seamStep)")
+assert(abs(20 * log10(startLevel / level)) < 3 && abs(20 * log10(endLevel / level)) < 3, "rain loop level dips at the join")
+print("rain loop ok")
